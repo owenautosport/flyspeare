@@ -114,15 +114,19 @@ class Brain:
         if c.length_cue:
             idx.append(self._off_len + min(length, c.max_pos) - 1)
         idx.append(self._off_pos + min(len(prefix), c.max_pos - 1))
-        return np.unique(np.array(idx))
+        # already sorted and distinct: each window slot, the length and the position have
+        # their own ascending block of channels
+        return np.array(idx)
 
     def kcs(self, pns: np.ndarray) -> np.ndarray:
-        drive = self.pn_kc_w[pns].sum(axis=0)
+        drive = np.add.reduce(self.pn_kc_w[pns], axis=0)        # .sum() without its wrapper
         return np.sort(np.argpartition(drive, -self.n_active)[-self.n_active:])
 
     # -- choosing --------------------------------------------------------------------------
     def probs(self, kcs: np.ndarray, noise: float = 1.0) -> np.ndarray:
-        m = self.w[:, :, kcs].mean(axis=2)            # (compartment, approach/avoid, key)
+        # mean over the active KCs: (compartment, approach/avoid, key); the same sum and divide
+        # as .mean(), without its Python wrapper (this runs for every keypress)
+        m = np.add.reduce(np.take(self.w, kcs, axis=2), axis=2) / len(kcs)
         drive = self._gain @ (m[:, APPROACH] - m[:, AVOID])
         logits = drive / (self.cfg.tau * noise)
         e = np.exp(logits - logits.max())
@@ -145,7 +149,8 @@ class Brain:
             for i, comp in enumerate(self.cfg.compartments):
                 if s < 0 and comp.learns_from == "reward":
                     continue
-                self.w[i, valence, kcs, key] *= 1 - min(1.0, self.cfg.eta * comp.eta * amt)
+                col = self.w[i, valence, :, key]      # a view: the same synapses, indexed faster
+                col[kcs] *= 1 - min(1.0, self.cfg.eta * comp.eta * amt)
 
     def consolidate(self, replay: list, strength: float = 1.0) -> int:
         """Sleep: replay the day's rewarded moments into the long-term compartment."""

@@ -74,7 +74,8 @@ class Runner:
         self.totals = {"presses": 0, "wrong_presses": 0, "attempts": 0,
                        "worst_word": "", "worst_attempts": 0}
         self._word_started = time.monotonic()
-        # (sensed window, position) -> (PNs, KCs): exactly what the brain's input depends on
+        # (sensed window, position, word length if it is sensed) -> (PNs, KCs): exactly what the
+        # brain's input depends on, so it holds across words
         self._kc_cache: dict[tuple[str, int], tuple[np.ndarray, np.ndarray]] = {}
         self._kc_cache_disabled = False
         self._stop = False
@@ -96,6 +97,7 @@ class Runner:
         L = len(target)
         prefix, intended, traces, probs, pns_seen = "", "", [], [], []
         slip = self.cfg.rewards.slip
+        length_cue = self.brain.cfg.length_cue
         # how it feels changes how it acts (life only): tiredness and lack of sleep make its
         # choices sloppier and its presses slower; hunger makes a sweet reward count for more
         noise, gain, press_s = 1.0, 1.0, FLY_SECONDS_PER_PRESS
@@ -104,27 +106,31 @@ class Runner:
             noise = (1 + 0.25 * i.fatigue) * (1 + 0.5 * max(0.0, i.sleep_pressure - 0.5))
             gain = 0.6 + 0.8 * i.hunger
             press_s = FLY_SECONDS_PER_PRESS * (1 + 0.8 * i.fatigue)
-        for _ in range(L):
-            key = ((self.context + prefix)[-self.brain.cfg.ctx_len:], len(prefix))
-            hit = None if self._kc_cache_disabled else self._kc_cache.get(key)
+        # (hot loop: names bound locally; the same operations in the same order)
+        brain, cache, random = self.brain, self._kc_cache, self.rng.random
+        use_cache, context, ctx_len = not self._kc_cache_disabled, self.context, brain.cfg.ctx_len
+        sensed_len, last_key = (L if length_cue else 0), len(ALPHABET) - 1
+        for pos in range(L):               # pos == len(prefix): one character per press
+            ckey = ((context + prefix)[-ctx_len:], pos, sensed_len)
+            hit = cache.get(ckey) if use_cache else None
             if hit is None:
-                pns = self.brain.encode(self.context, prefix, L)
-                hit = (pns, self.brain.kcs(pns))
-                if not self._kc_cache_disabled:
-                    if len(self._kc_cache) >= KC_CACHE_MAX:
-                        self._kc_cache.clear()
-                    self._kc_cache[key] = hit
+                pns = brain.encode(context, prefix, L)
+                hit = (pns, brain.kcs(pns))
+                if use_cache:
+                    if len(cache) >= KC_CACHE_MAX:
+                        cache.clear()
+                    cache[ckey] = hit
             pns, kcs = hit
             pns_seen.append(pns)
-            p = self.brain.probs(kcs, noise)
-            key = min(int(np.searchsorted(np.cumsum(p), self.rng.random())), len(ALPHABET) - 1)
+            p = brain.probs(kcs, noise)
+            key = min(int(p.cumsum().searchsorted(random())), last_key)
             traces.append((kcs, key))
             probs.append(p)
             meant = ALPHABET[key]
             intended += meant
-            if slip and self.rng.random() < slip:
+            if slip and random() < slip:
                 ns = NEIGHBOURS[meant]
-                prefix += ns[int(self.rng.random() * len(ns))]
+                prefix += ns[int(random() * len(ns))]
             else:
                 prefix += meant
         correct, signals = score_attempt(prefix, target, self.cfg.rewards)
@@ -292,7 +298,6 @@ class Runner:
         self.context = (self.context + word + " ")[-self.cfg.brain.ctx_len:]
         self.word_idx += 1
         self.attempts = self.presses_on_word = 0
-        self._kc_cache.clear()
         self._word_started = time.monotonic()
 
     # -- reporting -------------------------------------------------------------------------
