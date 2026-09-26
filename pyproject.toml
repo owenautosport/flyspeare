@@ -1,0 +1,30 @@
+[project]
+name = "flyspeare"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.26", "pandas>=2.0", "pyarrow>=14"]  # pandas/pyarrow: one-off FlyWire import
+
+description = "A fruit fly's real brain (FlyWire connectome) learning to type Shakespeare"
+readme = "README.md"
+license = { text = "MIT" }
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+# the 3D fly: exports the NeuroMechFly body from flygym for the browser
+fly3d = ["mujoco>=3.1", "fast-simplification>=0.1", "flygym>=1.0"]
+
+[project.scripts]
+flyspeare = "flyspeare.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools.package-data]
+flyspeare = ["web/*.html", "web/js/*.js", "web/assets/*"]
