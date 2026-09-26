@@ -63,7 +63,7 @@ def test_it_sleeps_at_night_and_replays_its_day(tmp_path):
             pass
     ev = [e for e in r.events if e["type"] == "sleep"]
     assert ev and ev[0]["hours"] > 9 and ev[0]["replayed"] > 0
-    assert 8 <= r.inner.hour() < 8.1                    # woke at 8 am
+    assert 8.3 <= r.inner.hour() < 8.4                  # woke at 8 am, then 20 minutes of breakfast
     assert r.inner.sleep_pressure < 0.1 and r.inner.hunger == 0.0   # rested, breakfast
     assert [e["meal"] for e in r.events if e["type"] == "meal"] == ["dinner", "breakfast"]
 
@@ -87,3 +87,22 @@ def test_life_state_survives_a_checkpoint(tmp_path):
     again = Runner(r.words, tmp_path / "life", r.cfg, quiet=True, resume=True)
     assert again.inner.nights == 1 and len(again.events) == len(r.events)
     assert len(again.replay) == len(r.replay) and np.array_equal(again.brain.w, r.brain.w)
+
+
+def test_meals_take_fly_time_and_end_a_run_slice(tmp_path):
+    cfg = RunConfig(seed=0, life=True, start_hour=17.99, brain=BrainConfig(wiring="flywire", ctx_len=4, output="mbon"))
+    r = Runner(VERSE * 400, tmp_path / "meal", cfg, quiet=True)
+    r.run(max_attempts=10_000)            # stops as soon as it goes to eat
+    assert r.inner.meals == 1 and r.attempts < 10_000 or r.word_idx < len(r.words)
+    assert r.rest_s >= 20 * 60                             # dinner took 20 fly-minutes
+    assert [e["type"] for e in r.events] == ["meal"] and r.events[-1]["minutes"] == 20
+
+
+def test_a_night_ends_the_slice_and_counts_as_rest(tmp_path):
+    cfg = RunConfig(seed=0, life=True, start_hour=21.99, brain=BrainConfig(wiring="flywire", ctx_len=4, output="mbon"))
+    r = Runner(VERSE * 400, tmp_path / "night", cfg, quiet=True)
+    r.run(max_attempts=10_000)            # it sat down at 21:59 without dinner: it eats first
+    assert r.inner.meals == 1 and r.inner.nights == 0
+    r.run(max_attempts=10_000)            # then goes to sleep, and the slice ends there
+    assert r.inner.nights == 1 and r.totals["attempts"] < 20_000
+    assert r.rest_s > 9.5 * 3600                            # ~10 h asleep, plus two meals

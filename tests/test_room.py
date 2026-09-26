@@ -1,3 +1,4 @@
+import pytest
 import json
 import threading
 import time
@@ -118,3 +119,26 @@ def test_running_time_counts_only_unpaused_time_and_survives_resume(tmp_path):
     time.sleep(1.0)
     r2.stop(); t.join()
     assert read_status(tmp_path / "room")["run_seconds"] > first + 0.6
+
+
+def test_at_max_speed_rest_takes_wall_time_scaled_to_its_speed(tmp_path):
+    from flyspeare.brain import BrainConfig
+    text = tmp_path / "t.txt"; text.write_text(("to be or not to be " * 200).strip())
+    cfg = RoomConfig(flies=1, workers=1, speed="max", status_secs=0.05, live_secs=0.02, life=True,
+                     start_hour=21.99, speedup=36000.0,          # 10 h of sleep -> ~1 s of wall time
+                     brain=BrainConfig(wiring="flywire", ctx_len=4, output="mbon"))
+    set_control(tmp_path / "room", watch=[0])
+    r = Room(text, tmp_path / "room", cfg)
+    t = threading.Thread(target=r.run); t.start()
+    time.sleep(0.4)
+    live = json.loads((tmp_path / "room" / "fly-0000" / "live.json").read_text())
+    p0 = live["presses"]
+    assert live["asleep_until"] and live["asleep_until"] > time.time()   # asleep, for about a second
+    # then breakfast, 20 fly-minutes, once it wakes; the rest ends when breakfast does
+    assert live["eating_until"] - live["asleep_until"] == pytest.approx(1200 / 36000, abs=0.01)
+    assert live["rest_until"] == live["eating_until"]
+    time.sleep(0.3)
+    assert json.loads((tmp_path / "room" / "fly-0000" / "live.json").read_text())["presses"] == p0  # no typing
+    time.sleep(1.2)
+    r.stop(); t.join()
+    assert json.loads((tmp_path / "room" / "fly-0000" / "live.json").read_text())["presses"] > p0   # awake again

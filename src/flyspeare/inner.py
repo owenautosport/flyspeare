@@ -116,6 +116,14 @@ class InnerState:
         self.since_meal_s += seconds
         self.nights += 1
 
+    def rest(self, seconds: float) -> None:
+        """Time off the keys that is not sleep (a meal): the body recovers a little, time passes."""
+        f = math.exp(-seconds / TAU_FATIGUE)
+        self.fatigue *= f
+        self.leg_fatigue = {k: v * f for k, v in self.leg_fatigue.items()}
+        self.clock_s += seconds
+        self.since_meal_s += seconds
+
     def eat(self) -> None:
         self.since_meal_s = 0.0
         self.hunger = 0.0

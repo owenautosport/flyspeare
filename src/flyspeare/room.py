@@ -42,6 +42,8 @@ class RoomConfig:
     rewards: Rewards = field(default_factory=Rewards)
     brain: BrainConfig = field(default_factory=BrainConfig)
     life: bool = False                      # sleep, meals, and states that change behaviour
+    start_hour: float = 8.0                 # each new fly's body clock when it first sits down
+    speedup: float | None = None            # max speed: fly-seconds per real second (None = measured)
     status_secs: float = 2.0
     max_slice: int = 200                    # attempts per fly per turn at max speed
     checkpoint_secs: float = 300.0          # every 5 minutes: a crash loses at most that
@@ -54,6 +56,7 @@ class RoomConfig:
         # big rooms write ~1 MB per fly per save: every 15 min for them, 5 min otherwise
         every = self.checkpoint_secs if self.flies <= 50 else max(self.checkpoint_secs, 900.0)
         return RunConfig(seed=self.seed + 2 * fly, rewards=self.rewards, brain=self.brain, life=self.life,
+                         start_hour=self.start_hour,
                          checkpoint_words=10**12, checkpoint_secs=every,
                          recent_len=self.recent_len, csv_every=self.csv_every)
 
@@ -136,6 +139,24 @@ def _work(text_path, room_dir, ids, cfg: RoomConfig, stop, k: int) -> None:
     rnd = random.Random(cfg.seed + k)
     now = time.monotonic()
     ready = {i: now + rnd.random() * cfg.press_seconds for i in ids}  # not all in lockstep
+    # max speed: how many fly-seconds each fly lives per real second, measured as it types, so
+    # its meals and nights take the same share of real time as they do of its fly time
+    speedup = {i: None for i in ids}
+    rest_until = {i: 0.0 for i in ids}
+
+    def rest_for(r, i, rest_fly_s, wall_scale):
+        """Pause fly i for rest_fly_s of fly time, at wall_scale real seconds per fly second."""
+        pause = rest_fly_s * wall_scale
+        # its rest in order (a night is sleep, then breakfast), each for its share of the pause
+        start = r.inner.clock_s - rest_fly_s - 1e-6
+        phases, t = [], time.time()
+        for e in r.events:
+            if e["clock_s"] > start and e["type"] in ("sleep", "meal"):
+                fly_s = e["hours"] * 3600 if e["type"] == "sleep" else e["minutes"] * 60
+                t += fly_s * wall_scale
+                phases.append({"kind": e["type"], "until": t})
+        r.resting = phases or [{"kind": "meal", "until": time.time() + pause}]
+        return pause
     status_path = room_dir / "status" / f"worker-{k:03d}.json"
     status_path.parent.mkdir(exist_ok=True)
     last_status = last_ctl = last_live = 0.0
@@ -180,27 +201,45 @@ def _work(text_path, room_dir, ids, cfg: RoomConfig, stop, k: int) -> None:
                 ready[i] = time.monotonic()
             continue
         if ctl["speed"] == "max":
-            for i in active:
+            awake = [i for i in active if rest_until[i] <= now]
+            if not awake:
+                time.sleep(0.01)          # everyone is eating or asleep
+                continue
+            for i in awake:
                 if stop.is_set():
                     break
-                flies[i].run(max_attempts=cfg.max_slice)
-                mark_finished(flies[i])
+                r = flies[i]
+                fly0, rest0, t0 = r.totals.get("fly_s", 0.0), r.rest_s, time.monotonic()
+                r.run(max_attempts=cfg.max_slice)
+                wall = time.monotonic() - t0
+                mark_finished(r)
+                rest = r.rest_s - rest0
+                typed = r.totals.get("fly_s", 0.0) - fly0 - rest
+                if typed > 0 and wall > 0:
+                    est = typed / wall
+                    speedup[i] = est if speedup[i] is None else 0.9 * speedup[i] + 0.1 * est
+                r.sim_rate = cfg.speedup or speedup[i]
+                if rest > 0:
+                    sp = cfg.speedup or speedup[i] or 4500.0
+                    rest_until[i] = time.monotonic() + rest_for(r, i, rest, 1.0 / sp)
                 ready[i] = time.monotonic()
             continue
         # real speed: a fly that has finished its last attempt is busy for L presses of fly time
         for i in active:
             if ready[i] <= now:
                 r = flies[i]
-                # pace by fly time: tired presses take longer, a night takes the whole night
+                # pace by fly time: tired presses take longer, a meal takes 20 minutes, a night
+                # the whole night
                 before = r.totals.get("fly_s", r.totals["presses"] * FLY_SECONDS_PER_PRESS)
-                slept = r.slept_s
+                rest0 = r.rest_s
                 r.run(max_attempts=1)
                 mark_finished(r)
                 spent = r.totals.get("fly_s", r.totals["presses"] * FLY_SECONDS_PER_PRESS) - before
-                wall = spent * cfg.press_seconds / FLY_SECONDS_PER_PRESS
-                ready[i] = max(ready[i], now - cfg.press_seconds) + wall
-                if r.slept_s > slept:
-                    r.asleep_until = time.time() + (r.slept_s - slept) * cfg.press_seconds / FLY_SECONDS_PER_PRESS
+                scale = cfg.press_seconds / FLY_SECONDS_PER_PRESS
+                r.sim_rate = 1 / scale
+                ready[i] = max(ready[i], now - cfg.press_seconds) + spent * scale
+                if r.rest_s > rest0:
+                    rest_for(r, i, r.rest_s - rest0, scale)
         soonest = min((ready[i] for i in active), default=now)
         time.sleep(min(max(soonest - time.monotonic(), 0.0), 0.05))
 

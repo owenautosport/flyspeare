@@ -12,7 +12,8 @@ from dataclasses import replace
 
 from .brain import LONG_TERM, SHORT_TERM, BrainConfig
 from .rules import Rewards
-from .room import Room, RoomConfig, leaderboard, load_room_config, read_status, room_text, set_control
+from .room import (Room, RoomConfig, leaderboard, load_room_config, read_control, read_status, room_text,
+                   set_control)
 from .run import RunConfig, Runner
 from .text import GUTENBERG_URL, load
 
@@ -102,12 +103,14 @@ def cmd_room(a) -> None:
     room_dir = Path(a.room_dir)
     workers = a.workers or RoomConfig().workers
     if a.resume and (room_dir / "room-config.json").exists():
-        # load exactly the settings the room was created with; only speed may change
+        # load exactly the settings the room was created with; only speed may change (kept
+        # as it was last set unless --speed is given)
         text = room_text(room_dir)
-        cfg = load_room_config(room_dir, speed=a.speed, resume=True, workers=workers)
+        speed = a.speed or read_control(room_dir)["speed"]
+        cfg = load_room_config(room_dir, speed=speed, resume=True, workers=workers)
     else:
         text = Path(a.text)
-        cfg = RoomConfig(flies=a.flies, speed=a.speed, seed=a.seed, resume=a.resume, brain=_brain(a),
+        cfg = RoomConfig(flies=a.flies, speed=a.speed or "real", seed=a.seed, resume=a.resume, brain=_brain(a),
                          life=not a.no_life and not a.easy,
                          rewards=Rewards(hit_prob=a.hit_prob, slip=a.slip), workers=workers)
     n_words = len(_words(text))
@@ -197,8 +200,9 @@ def main() -> None:
     rm = sub.add_parser("room", help="a room of flies racing to type all of Shakespeare")
     rm.add_argument("room_dir")
     rm.add_argument("--flies", type=int, default=1000)
-    rm.add_argument("--speed", choices=["real", "max"], default="real",
-                    help="real: 0.3 s per keypress per fly; max: as fast as the CPU allows")
+    rm.add_argument("--speed", choices=["real", "max"],
+                    help="real (default for a new room): 0.3 s per keypress per fly; max: as fast as the CPU "
+                         "allows. --resume keeps the room's last speed unless this is given")
     rm.add_argument("--workers", type=int, help="processes (default: CPU cores - 2)")
     rm.add_argument("--text", default="data/pg100.txt")
     rm.add_argument("--seed", type=int, default=0)

@@ -96,9 +96,10 @@ In the viewer, open **⋯ → New room**: give it a name, choose how many flies 
   centuries — and a night's sleep takes a real night.
 - **Rooms** can hold many flies (1,000 is fine), each with its own brain, racing to finish. The **Hall** view
   shows them all.
-- **Nights.** Each fly lives a day: breakfast at 08:00, dinner at 18:00, sleep from 22:00. At max speed a night
-  passes in a moment (the stage dims, and it replays the day into long-term memory); at real fly speed it
-  sleeps a real night.
+- **Days and nights.** Each fly lives a day: breakfast at 08:00, dinner at 18:00, sleep from 22:00, replaying
+  the day into long-term memory. Its clock is shown at the top as **sim time**. At max speed its time runs
+  faster (about ×10,000), so meals and sleep take their same share of it: a night lasts a few real seconds,
+  and you see it slump asleep, then drink from its sugar-water tube. At real fly speed it sleeps a real night.
 - Rooms run as their own processes, so closing the viewer never stops training. Every fly is saved every
   5 minutes, on **Save now**, and whenever you **Stop**; **Load** carries on exactly where it left off.
 

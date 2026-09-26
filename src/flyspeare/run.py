@@ -20,6 +20,7 @@ from .rules import ALPHABET, NEIGHBOURS, Rewards, score_attempt
 PRESS_SECONDS = FLY_SECONDS_PER_PRESS
 FORGET_EVERY = 256         # presses between applying forgetting (batched for speed)
 KC_CACHE_MAX = 200_000     # entries; cleared when full so a long stall cannot eat memory
+MEAL_S = 20 * 60           # a meal: 20 minutes of fly time off the keys
 STREAM_MAX = 8000          # every recent attempt (letters only) for the viewer's real-pace mode
 STALL_REPORTS = [10**k for k in range(3, 13)]  # 1k, 10k, 100k ... attempts on one word
 CSV_FIELDS = ["index", "word", "attempts", "presses", "wall_s", "fly_s"]
@@ -36,6 +37,7 @@ class RunConfig:
     stats_secs: float = 2.0
     csv_every: int = 1              # words per words.csv row (>1 sums blocks: a room of flies)
     life: bool = False              # sleep, meals, and internal states that change its behaviour
+    start_hour: float = 8.0         # its body clock when it first sits down (8 am)
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
@@ -59,7 +61,10 @@ class Runner:
         self.replay: deque = deque(maxlen=4000)          # today's rewarded moments, replayed in sleep
         self.events: deque = deque(maxlen=20)            # nights and meals, for the viewer
         self.slept_s = 0.0                               # fly seconds slept, read by the room's pacing
-        self.asleep_until = None                         # wall-clock time it wakes, at real fly speed
+        self.rest_s = 0.0                                # fly seconds spent eating or asleep
+        self.resting = None                              # [{"kind": "sleep"|"meal", "until": epoch}, ...], set by the room
+        self._rested = False                             # a rest happened in this run() slice
+        self.sim_rate = None                             # its fly-seconds per real second, set by the room
 
         self.word_idx = 0
         self.attempts = 0             # on the current word
@@ -76,6 +81,7 @@ class Runner:
         self._block = {"attempts": 0, "presses": 0, "wall_s": 0.0}  # words.csv block so far
         self._last_ckpt = time.monotonic()
 
+        self.inner.clock_s = (cfg.start_hour - 8.0) * 3600   # a fresh fly: its day starts at start_hour
         if resume and (self.dir / "state.json").exists():
             self._load()
         else:
@@ -161,10 +167,23 @@ class Runner:
         day = int((i.clock_s + 8 * 3600) // 86400)
         if hour >= 18 and getattr(self, "_dinner_day", -1) != day:
             self._dinner_day = day
-            i.eat()
-            self.events.append({"type": "meal", "meal": "dinner", "seq": self.totals["attempts"], "clock_s": i.clock_s})
+            self._meal("dinner")
         if hour >= 22 or hour < 8:
             self.sleep()
+
+    def _meal(self, which: str) -> None:
+        """Twenty minutes of fly time off the keys, eating."""
+        if self._unforgotten:
+            self.brain.elapse(self._unforgotten)
+            self._unforgotten = 0
+        self.brain.elapse(MEAL_S)
+        self.inner.rest(MEAL_S)
+        self.inner.eat()
+        self.totals["fly_s"] = self.totals.get("fly_s", 0.0) + MEAL_S
+        self.rest_s += MEAL_S
+        self._rested = True
+        self.events.append({"type": "meal", "meal": which, "minutes": MEAL_S // 60,
+                            "seq": self.totals["attempts"], "clock_s": self.inner.clock_s})
 
     def sleep(self) -> None:
         """Sleep until 8 am: replay the day's rewarded moments into long-term memory (as real
@@ -178,12 +197,13 @@ class Runner:
         self.replay.clear()
         self.brain.elapse(until8)
         i.sleep(until8)
-        i.eat()
         self.totals["fly_s"] = self.totals.get("fly_s", 0.0) + until8
         self.slept_s += until8
+        self.rest_s += until8
+        self._rested = True
         self.events.append({"type": "sleep", "hours": round(until8 / 3600, 2), "replayed": replayed,
                             "seq": self.totals["attempts"], "clock_s": i.clock_s})
-        self.events.append({"type": "meal", "meal": "breakfast", "seq": self.totals["attempts"], "clock_s": i.clock_s})
+        self._meal("breakfast")
 
     def p_word(self) -> float:
         """Probability the brain types the current word right in one go, as it stands now."""
@@ -204,11 +224,18 @@ class Runner:
             old = signal.signal(signal.SIGINT, self._on_sigint)
             old_term = signal.signal(signal.SIGTERM, self._on_sigint)
         try:
+            self._rested = False
             while self.word_idx < end and not self._stop:
                 if max_attempts is not None and attempts_this_call >= max_attempts:
                     break
                 _, correct, _ = self.attempt()
                 attempts_this_call += 1
+                # in a room (sliced runs) stop when it goes to eat or sleep, so the room can
+                # pause it for that long; a plain `flyspeare run` just carries on
+                if self._rested and max_attempts is not None:
+                    if correct:
+                        self._commit_word()
+                    break
                 if self.attempts in STALL_REPORTS:
                     self._report_stall()
                 if correct:
@@ -294,6 +321,7 @@ class Runner:
             "word_idx": self.word_idx, "attempts": self.attempts,
             "presses_on_word": self.presses_on_word, "context": self.context,
             "unforgotten_s": self._unforgotten, "block": self._block, "inner": self.inner.to_dict(),
+            "rest_s": self.rest_s,
             "events": list(self.events), "dinner_day": getattr(self, "_dinner_day", -1),
             "replay": [[k.tolist(), int(key), float(s)] for k, key, s in self.replay],
             "totals": self.totals, "rng": self.rng.bit_generator.state,
@@ -316,7 +344,14 @@ class Runner:
                 "target": None if self.finished else self.words[self.word_idx],
                 "items": self.live_items(n), "stream": self._stream_json(), "brain": self._brain_state(),
                 "inner": self.inner.to_dict(), "events": list(self.events), "life": self.cfg.life,
-                "asleep_until": self.asleep_until if self.asleep_until and self.asleep_until > time.time() else None}
+                "asleep_until": self._resting_until("sleep"), "eating_until": self._resting_until("meal"),
+                "rest_until": self._resting_until(None), "sim_rate": self.sim_rate}
+
+    def _resting_until(self, kind: str | None):
+        """When its current or coming sleep / meal ends (None: when the whole rest ends)."""
+        now = time.time()
+        ahead = [p for p in self.resting or [] if p["until"] > now and kind in (None, p["kind"])]
+        return ahead[-1]["until"] if ahead else None
 
     def _brain_state(self) -> dict:
         """How much dopamine has reshaped each memory store: 0 = untouched, 1 = fully depressed."""
@@ -340,6 +375,7 @@ class Runner:
         # (older checkpoints counted unforgotten keypresses, not fly seconds)
         self._unforgotten = state.get("unforgotten_s", state.get("unforgotten", 0) * PRESS_SECONDS)
         self.events = deque(state.get("events", []), maxlen=20)
+        self.rest_s = state.get("rest_s", 0.0)
         self._dinner_day = state.get("dinner_day", -1)
         self.replay = deque(((np.array(k, dtype=np.int64), key, s) for k, key, s in state.get("replay", [])), maxlen=4000)
         self._block = state.get("block", self._block)
