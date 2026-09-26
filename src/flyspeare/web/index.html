@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>flyspeare</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6' fill='%23e39a3b'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Special+Elite&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #080b13; --bar: #0c111d; --card: rgba(12, 17, 29, 0.82); --line: rgba(160, 190, 240, 0.14);
+    --ink: #e9eef8; --dim: #7f8ba3; --accent: #5ff3ff; --good: #5aff8c; --bad: #ff6a5e;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 13px/1.4 Inter, system-ui, sans-serif; }
+  body { display: grid; grid-template-rows: 52px 1fr; height: 100vh; overflow: hidden; min-width: 1000px; }
+  main { display: grid; grid-template-columns: 1fr 440px; min-height: 0; }
+  .side { display: flex; flex-direction: column; gap: 12px; padding: 12px; border-left: 1px solid var(--line); background: var(--bar); min-height: 0; }
+  button, select, input { font: 500 13px Inter; color: var(--ink); background: transparent; border: 1px solid var(--line);
+                          border-radius: 7px; padding: 6px 11px; cursor: pointer; }
+  button:hover, select:hover { border-color: rgba(95,243,255,.5); }
+  input { cursor: text; }
+  select { background: var(--bar); }
+
+  /* header */
+  header { display: flex; align-items: center; gap: 18px; padding: 0 16px; background: var(--bar); border-bottom: 1px solid var(--line); }
+  .brand { font-weight: 700; letter-spacing: .02em; color: #e3b45b; }
+  .state { color: var(--dim); display: flex; align-items: center; gap: 6px; }
+  .state i { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); }
+  .state.live i { background: var(--bad); box-shadow: 0 0 8px var(--bad); }
+  .spacer { flex: 1; }
+  .stat { text-align: right; line-height: 1.15; }
+  .stat b { display: block; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .stat span { font-size: 11px; color: var(--dim); }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; padding: 6px 11px; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button.on, button.on { background: rgba(95,243,255,.12); color: var(--accent); }
+  .primary { min-width: 84px; }
+  button:disabled { opacity: .35; cursor: default; }
+  button.danger { border-color: var(--bad); color: var(--bad); }
+
+  /* the menu */
+  .menu { position: fixed; top: 58px; right: 16px; width: 300px; padding: 14px; background: var(--bar); border: 1px solid var(--line);
+          border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.5); display: none; z-index: 5; }
+  .menu.open { display: block; }
+  .menu h4 { margin: 14px 0 8px; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+  .menu h4:first-child { margin-top: 0; }
+  .menu .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .menu .row > * { flex: 1; min-width: 0; }
+  .flies { display: grid; gap: 4px; max-height: 180px; overflow: auto; }
+  .flies button { display: flex; justify-content: space-between; text-align: left; }
+  .flies small { color: var(--dim); }
+
+  /* the scene */
+  .stage { position: relative; min-height: 0; }
+  #scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .views { position: absolute; top: 14px; left: 14px; background: var(--card); }
+  .brain { padding: 12px 14px; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; }
+  .brain .title { display: flex; justify-content: space-between; font-size: 11px; color: var(--dim); }
+  .brain canvas { width: 100%; aspect-ratio: 1.4; display: block; margin: 6px 0; touch-action: none; }
+  .brain .hint { font-size: 11px; color: var(--dim); opacity: .7; margin-top: 4px; }
+  .brain .line { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--dim); }
+  .brain .line b { color: var(--ink); font-weight: 600; }
+  .dopa { padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; }
+  .dopa.pam { background: rgba(90,255,140,.14); color: var(--good); }
+  .dopa.ppl1 { background: rgba(255,106,94,.14); color: var(--bad); }
+
+  /* the paper */
+  .paper { position: relative; flex: 1; min-height: 0; background: #f1ece0; color: #26221c; border-radius: 12px; overflow: hidden;
+           display: flex; flex-direction: column; }
+  .paper .scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 16px 6px; }
+  .paper .scroll pre { margin: 0; font: 15px/1.45 'Special Elite', 'Courier New', monospace; white-space: pre-wrap; }
+  .paper .begin { font: 600 11px Inter; color: #85796a; letter-spacing: .06em; text-transform: uppercase; margin-bottom: 8px; }
+  .paper .older { font: 11px Inter; color: #85796a; text-align: center; padding: 4px; }
+  .paper .tries { flex-shrink: 0; max-height: 42%; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end;
+                  padding: 8px 16px 12px; border-top: 1px dashed rgba(0,0,0,.15); font: 15px/1.45 'Special Elite', 'Courier New', monospace; }
+  .paper .jump { position: absolute; right: 14px; bottom: calc(42% + 10px); font-size: 12px; background: #26221c; color: #f1ece0; border: 0; }
+  .paper .head { display: flex; align-items: center; gap: 12px; padding: 9px 14px; border-bottom: 1px solid rgba(0,0,0,.07); font-size: 11px; color: #85796a; }
+  .paper .pace { margin-left: auto; font-variant-numeric: tabular-nums; }
+  .paper .pace b { color: #26221c; }
+  .paper s { color: #b3261e; } .paper .now { background: rgba(227,180,91,.35); } .paper .ok { color: #1d7a3a; }
+
+  .feel { position: fixed; inset: 52px 440px 0 0; display: flex; align-items: center; justify-content: center; background: rgba(4,6,12,.55); z-index: 4; }
+  .feel[hidden] { display: none; }
+  .feel-card { width: min(640px, 92%); max-height: 88%; overflow: auto; background: var(--bar); border: 1px solid var(--line); border-radius: 14px;
+               padding: 18px 20px; box-shadow: 0 30px 80px rgba(0,0,0,.6); }
+  .feel-head { display: flex; align-items: center; gap: 10px; }
+  .feel-head b { font-size: 15px; } #feelAge { color: var(--dim); font-size: 12px; margin-right: 6px; }
+  .voice { margin: 16px 0 18px; }
+  .voice .vl { font: 19px/1.5 'Special Elite', 'Courier New', monospace; color: #f1ece0; opacity: 0; animation: vin .5s forwards; }
+  .voice .vl + .vl { margin-top: 4px; }
+  .voice .vl:last-child { margin-top: 12px; color: #e3b45b; }
+  .voice .why { display: none; font: 11px/1.3 Inter; color: var(--dim); margin: 1px 0 6px 2px; }
+  .voice.show-why .why { display: block; }
+  @keyframes vin { to { opacity: 1; } }
+  .readings { margin: 0 0 10px; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+  .gauges { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 18px; }
+  .gauges h5 { grid-column: span 2; margin: 6px 0 0; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+  .gauges .span2 { grid-column: span 2; color: var(--dim); }
+  .gauge .top { display: flex; justify-content: space-between; font-size: 12px; } .gauge .top b { font-variant-numeric: tabular-nums; }
+  .gauge .bar { height: 5px; background: rgba(255,255,255,.07); border-radius: 3px; margin: 5px 0 3px; position: relative; overflow: hidden; }
+  .gauge .bar i { position: absolute; top: 0; bottom: 0; left: 0; background: var(--accent); border-radius: 3px; }
+  .gauge .bar i.neg { background: var(--bad); } .gauge .bar i.pos { background: var(--good); }
+  .gauge small { color: var(--dim); font-size: 11px; line-height: 1.3; display: block; }
+  .feel-note { color: var(--dim); font-size: 11px; margin: 16px 0 0; }
+  .toast { position: fixed; left: 50%; top: 64px; transform: translateX(-50%); padding: 7px 16px; border-radius: 99px;
+           background: var(--bar); border: 1px solid var(--line); opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 6; }
+  .toast.show { opacity: 1; }
+  .daynote { position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); padding: 8px 16px; border-radius: 99px;
+             background: rgba(8,12,24,.85); border: 1px solid var(--line); color: #b9c8ff; font-size: 13px; white-space: nowrap; }
+  .empty { position: absolute; top: 35%; left: 0; right: 0; text-align: center; color: var(--dim); font-size: 15px; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<header>
+  <span class="brand">flyspeare</span>
+  <select id="roomSel" title="room"></select>
+  <span class="state" id="state"><i></i><span id="stateText">–</span></span>
+  <span class="spacer"></span>
+  <div class="stat"><b id="word">–</b><span id="pct">word</span></div>
+  <div class="stat"><b id="tries">–</b><span>tries on this word</span></div>
+  <div class="stat"><b id="rate">–</b><span>keys / s</span></div>
+  <div class="stat"><b id="runTime">–</b><span>training time</span></div>
+  <button class="primary" id="pause">Pause</button>
+  <div class="seg"><button data-speed="real" title="0.3 s per key, like a real fly">Real fly</button><button data-speed="max">Max</button></div>
+  <button id="menuBtn" title="more">⋯</button>
+</header>
+
+<div class="menu" id="menu">
+  <h4>This room</h4>
+  <div class="row"><button id="save">Save now</button><button id="stop">Stop</button></div>
+  <div class="row"><button id="del">Delete room…</button></div>
+  <h4>Watch</h4>
+  <div class="row"><button id="follow">Follow the leader</button></div>
+  <div class="row"><input type="number" id="flyId" min="0" value="0" title="fly number"><button id="watchFly">Watch fly</button></div>
+  <div class="flies" id="flies"></div>
+  <h4>New room</h4>
+  <div class="row"><input type="text" id="newName" placeholder="name"><input type="number" id="newFlies" value="1" min="1" max="5000" title="flies" style="max-width:70px"></div>
+  <div class="row"><select id="newSpeed"><option value="max">max speed</option><option value="real">real fly speed</option></select><button id="newRoom">Start</button></div>
+</div>
+
+<main>
+<div class="stage">
+  <canvas id="scene"></canvas>
+  <div class="seg views">
+    <button data-cam="front" class="on">Front</button><button data-cam="close">Close</button><button data-cam="side">Side</button><button data-cam="paper">Paper</button><button data-cam="hall" id="hallBtn" hidden>Hall</button>
+  </div>
+  <div class="empty" id="empty" hidden>No room running · open ⋯ to start one</div>
+  <div class="daynote" id="dayNote" hidden></div>
+</div>
+
+<div class="side">
+  <div class="brain">
+    <div class="title"><span id="flyLabel">Fly #0</span><span>FlyWire v783 · mushroom body</span></div>
+    <canvas id="brain"></canvas>
+    <div class="line"><span><b id="kcCount">–</b> Kenyon cells firing</span><span id="dopa" class="dopa"></span></div>
+    <div class="line" style="margin-top:8px"><span class="hint">drag to turn · scroll to zoom · double-click to reset</span>
+      <button id="askBtn">How do you feel?</button></div>
+  </div>
+
+  <div class="paper">
+    <div class="head">
+      <span>As typed by the fly</span>
+      <span class="pace" id="paceInfo"></span>
+    </div>
+    <div class="scroll" id="scroll">
+      <div class="begin" id="begin" hidden>The Complete Works of William Shakespeare — from the first word</div>
+      <div class="older" id="older" hidden>scroll up for earlier text…</div>
+      <pre id="written"></pre>
+    </div>
+    <button class="jump" id="jump" hidden>↓ newest</button>
+    <div class="tries" id="triesText"></div>
+  </div>
+</div>
+</main>
+<div class="feel" id="feel" hidden>
+  <div class="feel-card">
+    <div class="feel-head"><b id="feelTitle">How the fly feels</b><span class="spacer"></span><span id="feelAge"></span>
+      <button id="whyBtn">Why?</button><button id="askAgain">Ask again</button><button id="feelClose">✕</button></div>
+    <div class="voice" id="feelSummary">Listening…</div>
+    <div class="gauges" id="feelGauges"></div>
+    <p class="feel-note" id="feelNote"></p>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
