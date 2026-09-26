@@ -255,6 +255,14 @@ def _voice(target, live, on_word, frustration, usual, big, mood, reward_rate, pu
         say(pick(["Ate. Belly full. Sweet food.", "Food. Good. Belly full."]),
             f"its last meal was {_fmt_span(inner['since_meal_s'])} ago")
 
+    # kept from food and sleep (the room's no-rest switch)
+    if live.get("no_rest"):
+        meals = sum(1 for e in events if e["type"] == "skip" and e["what"] == "dinner")
+        nights = sum(1 for e in events if e["type"] == "skip" and e["what"] == "night")
+        say(pick(["Food time. Dark time. Nothing comes. Only keys.", "Sweet water not come. Sleep not come. Keys."]),
+            f"it is being kept from food and sleep: lately it has missed {meals} meal{'s' if meals != 1 else ''} "
+            f"and {nights} night{'s' if nights != 1 else ''} (each missed night takes its breakfast too)")
+
     # 2. what has built up in it, strongest first
     felt = []   # (strength, text, because, short phrase for the last line)
     fat, legs = inner.get("fatigue", 0), inner.get("leg_fatigue", {"L": 0, "R": 0})

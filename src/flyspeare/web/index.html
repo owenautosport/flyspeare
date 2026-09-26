@@ -46,6 +46,7 @@
   .seg button { border: 0; border-radius: 0; padding: 6px 11px; }
   .seg button + button { border-left: 1px solid var(--line); }
   .seg button.on, button.on { background: rgba(95,243,255,.12); color: var(--accent); }
+  #noRest.on { background: rgba(255,90,80,.16); color: #ff8a80; border-color: rgba(255,90,80,.5); }
   .primary { min-width: 84px; }
   button:disabled { opacity: .35; cursor: default; }
   button.danger { border-color: var(--bad); color: var(--bad); }
@@ -138,6 +139,7 @@
   <div class="stat"><b id="tries">–</b><span>tries on this word</span></div>
   <div class="stat"><b id="rate">–</b><span>keys / s</span></div>
   <div class="stat"><b id="runTime">–</b><span>training time</span></div>
+  <button id="noRest">No food or sleep</button>
   <button class="primary" id="pause">Pause</button>
   <div class="seg"><button data-speed="real" title="0.3 s per key, like a real fly">Real fly</button><button data-speed="max">Max</button></div>
   <button id="menuBtn" title="more">⋯</button>

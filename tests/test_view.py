@@ -51,6 +51,10 @@ def test_live_feed_and_control(server):
     assert live["items"][-1]["correct"]
     ctl = post(server + "/api/rooms/r1/control", {"speed": "real", "watch": [1], "save": True})
     assert ctl["speed"] == "real" and ctl["watch"] == [1] and ctl["save"] == 1
+    assert ctl["no_rest"] is False
+    ctl = post(server + "/api/rooms/r1/control", {"no_rest": True})      # keep it from food and sleep
+    assert ctl["no_rest"] is True and ctl["speed"] == "real"             # the rest unchanged
+    assert next(r for r in get(server + "/api/rooms") if r["name"] == "r1")["no_rest"] is True
 
 
 def test_rejects_bad_room_names(server):

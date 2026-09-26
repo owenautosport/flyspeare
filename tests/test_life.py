@@ -106,3 +106,20 @@ def test_a_night_ends_the_slice_and_counts_as_rest(tmp_path):
     r.run(max_attempts=10_000)            # then goes to sleep, and the slice ends there
     assert r.inner.nights == 1 and r.totals["attempts"] < 20_000
     assert r.rest_s > 9.5 * 3600                            # ~10 h asleep, plus two meals
+
+
+def test_kept_from_food_and_sleep_it_skips_both_and_they_build_up(tmp_path):
+    cfg = RunConfig(seed=0, life=True, start_hour=17.5, brain=BrainConfig(wiring="flywire", ctx_len=4, output="mbon"))
+    r = Runner(VERSE * 400, tmp_path / "kept", cfg, quiet=True)
+    r.no_rest = True
+    start = r.inner.clock_s
+    while r.inner.clock_s - start < 15 * 3600:          # 17:30 to 08:30 the next day
+        r.attempt()
+    assert r.inner.meals == 0 and r.inner.nights == 0 and r.rest_s == 0
+    assert [e["what"] for e in r.events if e["type"] == "skip"] == ["dinner", "night"]   # each once
+    assert r.inner.hunger > 0.3 and r.inner.sleep_pressure > 0.75
+    assert r.live_snapshot()["no_rest"] is True
+    r.no_rest = False                                   # allowed again: its next dinner and night
+    while r.inner.nights == 0:
+        r.attempt()
+    assert [e["meal"] for e in r.events if e["type"] == "meal"] == ["dinner", "breakfast"]

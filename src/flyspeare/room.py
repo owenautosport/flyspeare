@@ -5,7 +5,8 @@ be inspected or resumed on its own. Flies are shared out between worker processe
 control file in the room directory is read live, so speed can be switched and the room paused
 while it runs:
 
-  control.json  {"speed": "real" | "max", "paused": false, "watch": [fly ids], "save": n}
+  control.json  {"speed": "real" | "max", "paused": false, "watch": [fly ids], "save": n,
+                 "no_rest": false (true keeps every fly from its meals and sleep)}
 
 watch: flies whose recent attempts are streamed to fly-XXXX/live.json for the viewer.
 save:  a counter; bumping it makes every worker checkpoint all its flies now.
@@ -62,7 +63,7 @@ class RoomConfig:
 
 
 # -- control and status files ------------------------------------------------------------------
-_CONTROL_DEFAULTS = {"speed": "real", "paused": False, "watch": [], "save": 0}
+_CONTROL_DEFAULTS = {"speed": "real", "paused": False, "watch": [], "save": 0, "no_rest": False}
 
 
 def read_control(room_dir: Path) -> dict:
@@ -73,7 +74,7 @@ def read_control(room_dir: Path) -> dict:
 
 
 def set_control(room_dir: Path, *, speed: str | None = None, paused: bool | None = None,
-                watch: list[int] | None = None, save: bool = False) -> dict:
+                watch: list[int] | None = None, save: bool = False, no_rest: bool | None = None) -> dict:
     room_dir = Path(room_dir)
     room_dir.mkdir(parents=True, exist_ok=True)
     ctl = read_control(room_dir)
@@ -83,6 +84,8 @@ def set_control(room_dir: Path, *, speed: str | None = None, paused: bool | None
         ctl["speed"] = speed
     if paused is not None:
         ctl["paused"] = paused
+    if no_rest is not None:
+        ctl["no_rest"] = bool(no_rest)
     if watch is not None:
         ctl["watch"] = [int(i) for i in watch]
     if save:
@@ -181,6 +184,8 @@ def _work(text_path, room_dir, ids, cfg: RoomConfig, stop, k: int) -> None:
         now = time.monotonic()
         if now - last_ctl >= 0.2:
             ctl, last_ctl = read_control(room_dir), now
+            for r in flies.values():
+                r.no_rest = bool(ctl["no_rest"])
             if ctl["save"] != saved_seq:
                 for r in flies.values():
                     r.checkpoint()
@@ -339,7 +344,7 @@ class Room:
             self._run_seconds += now - self._run_mark
         self._run_mark = now
         status = {
-            "updated": time.time(), "speed": ctl["speed"], "paused": ctl["paused"],
+            "updated": time.time(), "speed": ctl["speed"], "paused": ctl["paused"], "no_rest": ctl["no_rest"],
             "total_presses": total, "presses_per_s": round(rate, 1),
             "run_seconds": round(self._run_seconds, 1),
             "leader": max(flies, key=lambda f: (f["word"], -f["presses"]))["id"] if flies else None,

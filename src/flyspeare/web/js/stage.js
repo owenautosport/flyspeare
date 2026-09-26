@@ -124,7 +124,7 @@ export class Stage {
     }
     this._plantFeet(60);
     // resting: "sleep" or "eat", blended in and out (0 = typing, 1 = fully resting)
-    this.rest = { kind: null, blend: 0, level: 1 };
+    this.rest = { kind: null, blend: 0, level: 1, speed: 1 };
     this.feeder = this._makeFeeder();
     this.strike = null;      // the key press being animated
     this.arm = { L: { ...fly.rest.L }, R: { ...fly.rest.R } };
@@ -184,7 +184,7 @@ export class Stage {
     return { x: (v.x + 1) / 2 * c.clientWidth, y: (1 - v.y) / 2 * c.clientHeight, visible: v.z < 1 };
   }
 
-  setRest(kind) { this.rest.kind = kind; if (kind === "eat") this.rest.level = 1; }
+  setRest(kind) { this.rest.kind = kind; if (kind === "eat") this.rest.level = 1; }   // rest.speed: sim time's speed-up
 
   _plantFeet(iters) {
     this.flyHolder.updateWorldMatrix(true, true);
@@ -193,7 +193,8 @@ export class Stage {
 
   _animateRest(dt) {
     const r = this.rest, f = this.fly, deg = THREE.MathUtils.degToRad;
-    r.blend += ((r.kind ? 1 : 0) - r.blend) * Math.min(1, dt * 2.5);
+    // it settles in about 0.4 s of its own time, however fast its time is running
+    r.blend += ((r.kind ? 1 : 0) - r.blend) * Math.min(1, dt * 2.5 * (r.speed || 1));
     const b = ease(Math.min(1, Math.max(0, r.blend)));
     const sleeping = r.kind === "sleep" || (!r.kind && this._lastRest === "sleep");
     if (r.kind) this._lastRest = r.kind;
@@ -223,7 +224,6 @@ export class Stage {
     if (fd.visible) {
       fd.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), this.feederDir);
       fd.position.copy(this.mouth).add(this.feederTip).addScaledVector(this.feederDir, (1 - b) * 1.6);   // slides in along itself
-      if (r.kind === "eat") r.level = Math.max(0.35, r.level - dt * 0.2);
       fd.userData.liquid.scale.y = r.level;
       fd.userData.liquid.position.y = 0.4 * r.level;
       fd.userData.drop.scale.setScalar(0.6 + 0.4 * r.level);

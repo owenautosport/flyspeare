@@ -3,7 +3,7 @@ import json
 import threading
 import time
 
-from flyspeare.room import Room, RoomConfig, read_status, set_control
+from flyspeare.room import Room, RoomConfig, read_control, read_status, set_control
 
 VERSE = ("to be or not to be " * 3).strip()
 
@@ -142,3 +142,20 @@ def test_at_max_speed_rest_takes_wall_time_scaled_to_its_speed(tmp_path):
     time.sleep(1.2)
     r.stop(); t.join()
     assert json.loads((tmp_path / "room" / "fly-0000" / "live.json").read_text())["presses"] > p0   # awake again
+
+
+def test_no_rest_control_keeps_every_fly_from_eating_and_sleeping(tmp_path):
+    from flyspeare.brain import BrainConfig
+    text = tmp_path / "t.txt"; text.write_text(("to be or not to be " * 200).strip())
+    cfg = RoomConfig(flies=1, workers=1, speed="max", status_secs=0.05, live_secs=0.02, life=True,
+                     start_hour=21.99, speedup=36000.0, brain=BrainConfig(wiring="flywire", ctx_len=4, output="mbon"))
+    set_control(tmp_path / "room", watch=[0], no_rest=True)
+    assert read_control(tmp_path / "room")["no_rest"] is True
+    r = Room(text, tmp_path / "room", cfg)
+    t = threading.Thread(target=r.run); t.start()
+    time.sleep(1.0)
+    live = json.loads((tmp_path / "room" / "fly-0000" / "live.json").read_text())
+    r.stop(); t.join()
+    assert live["no_rest"] is True and not live["asleep_until"] and live["inner"]["nights"] == 0
+    assert "night" in [e.get("what") for e in live["events"]]
+    assert read_status(tmp_path / "room")["no_rest"] is True
