@@ -42,6 +42,12 @@ const crowd = await loadCrowd(stage);
 let paperDirty = 0;
 stage.onFrame = (dt) => {
   brain.draw(dt);
+  // z z z above its head while it sleeps
+  const z = $("zzz");
+  if (stage.rest.kind === "sleep" && stage.rest.blend > 0.5) {
+    const p = stage.headOnScreen();
+    z.hidden = !p.visible; z.style.left = `${p.x + 40}px`; z.style.top = `${p.y - 110}px`;
+  } else z.hidden = true;
   renderMode();
   if (!realPaceOn()) return;
   const r = pace.frame(dt, () => { paperDirty++; });
@@ -142,10 +148,8 @@ function renderControls() {
   $("pause").textContent = !r ? "–" : !running ? "Load" : S.paused ? "Resume" : "Pause";
   const live = running && !S.paused;
   $("state").classList.toggle("live", live);
-  const inner = S.live?.inner, clock = inner?.clock_s != null ? (8 + inner.clock_s / 3600) % 24 : null;
-  const hhmm = clock == null ? "" : ` · ${String(Math.floor(clock)).padStart(2, "0")}:${String(Math.floor((clock % 1) * 60)).padStart(2, "0")} fly time`;
   $("stateText").textContent = !r ? "no room" : !running ? "stopped" : S.paused ? "paused" :
-    `fly #${S.fly}${S.follow && r.flies > 1 ? " (leader)" : ""} · ${S.speed === "real" ? "real fly speed" : "max speed"}${S.live?.asleep_until ? " · asleep" : hhmm}`;
+    `fly #${S.fly}${S.follow && r.flies > 1 ? " (leader)" : ""} · ${S.speed === "real" ? "real fly speed" : "max speed"}${S.live?.asleep_until ? " · asleep" : S.live?.eating_until ? " · eating" : ""}`;
   $("stop").disabled = !running;
   $("del").disabled = running;
   $("hallBtn").hidden = !(r && r.flies > 1);
@@ -196,34 +200,107 @@ async function watch(id) {
   refreshPaper();
 }
 
+// ---------------------------------------------------------------- the sim clock
+// The fly's own time, running at its sped-up rate and ticking smoothly through typing, meals and
+// sleep alike. While it rests, its saved clock already reads the moment it will wake, so the
+// display counts up to it; while it types, it runs on from the last reading.
+function measureRate(prev, live) {
+  const c = (l) => l?.inner?.clock_s ?? l?.inner?.awake_s;
+  if (prev && c(prev) != null && c(live) != null && live.time > prev.time && c(live) >= c(prev) && S.fly === S.rateFly && S.room === S.rateRoom) {
+    const r = (c(live) - c(prev)) / (live.time - prev.time);
+    S.measuredRate = S.measuredRate ? S.measuredRate * 0.8 + r * 0.2 : r;
+  } else if (S.fly !== S.rateFly || S.room !== S.rateRoom) S.measuredRate = 0;
+  S.rateFly = S.fly; S.rateRoom = S.room;
+}
+
+function simClock() {
+  const l = S.live, inner = l?.inner;
+  if (!inner) return null;
+  // rooms started before the clock existed report only time awake, and no rate: measure it
+  const rate = l.sim_rate || S.measuredRate || (S.speed === "real" ? 1 : 0);
+  const now = Date.now() / 1000;
+  const restUntil = l.rest_until || l.asleep_until || l.eating_until;   // its clock already counts the whole rest
+  let clock = inner.clock_s ?? inner.awake_s ?? 0;
+  if (restUntil && restUntil > now) clock -= (restUntil - now) * rate;
+  // after the snapshot (or after a rest it already counted) time runs on at its rate
+  else if (!S.paused && rate) clock += Math.max(0, Math.min(2, now - Math.max(l.time, restUntil || 0))) * rate;
+  // never run the shown clock backwards when a new snapshot lands a little behind the estimate
+  const key = `${S.room}/${S.fly}`;
+  if (simClock.key === key && clock < simClock.last && simClock.last - clock < 6 * 3600) clock = simClock.last;
+  simClock.key = key; simClock.last = clock;
+  const t = 8 * 3600 + clock;
+  return { day: Math.floor(t / 86400) + 1, hour: (t % 86400) / 3600, rate };
+}
+const hhmm = (h) => `${String(Math.floor(h)).padStart(2, "0")}:${String(Math.floor((h % 1) * 60)).padStart(2, "0")}`;
+setInterval(() => {
+  const c = simClock(), r = S.rooms.find((x) => x.name === S.room);
+  $("simBig").hidden = !c || !r?.running;
+  if (!c || !r?.running || S.paused) return;
+  $("simTime").textContent = `Day ${fmt(c.day)} · ${hhmm(c.hour)}`;
+  $("simRate").textContent = c.rate > 1.5 ? `sim time · ×${fmt(Math.round(c.rate))} real` : "sim time · real fly speed";
+  const night = c.hour >= 21 || c.hour < 6;
+  $("simSky").textContent = night ? "☾" : c.hour < 8 || c.hour >= 19 ? "◐" : "☀";
+  if (S.live?.asleep_until) $("dayNote").textContent = `Asleep · ${hhmm(c.hour)} → 08:00 sim time`;
+}, 100);
+
+// the rest animation follows its live feed: asleep, then eating. A meal shows for at least
+// 0.8 s (at max speed a 20-minute meal lasts a fraction of a second); breakfast starts when it wakes
+let mealEndAt = 0, mealSeen = 0;
+function showMealFor(end) { mealEndAt = Math.max(mealEndAt, end); }
+function driveRest(live) {
+  const now = Date.now() / 1000;
+  if (live?.eating_until && live.eating_until !== mealSeen) {
+    mealSeen = live.eating_until;
+    showMealFor(Math.max(live.eating_until, Math.max(now, live.asleep_until || 0) + 0.8));
+  }
+  if (live?.asleep_until && live.asleep_until > now) stage.setRest("sleep");
+  else if (now < mealEndAt) {
+    if (stage.rest.kind !== "eat") {
+      stage.setRest("eat");
+      const meal = [...(live?.events || [])].reverse().find((e) => e.type === "meal");
+      toast(meal?.meal === "dinner" ? "Dinner — sugar water, 20 sim-minutes" : "Breakfast — sugar water, 20 sim-minutes");
+    }
+  } else if (stage.rest.kind) stage.setRest(null);
+}
+setInterval(() => driveRest(S.live), 100);
+
 // ---------------------------------------------------------------- its day: nights and meals
 let lastEventKey = null, nightTimer = null;
 function showDay(live) {
   const asleep = !!live.asleep_until;
+  const left = (until) => {
+    const s = Math.max(0, Math.round(until - Date.now() / 1000));
+    return s < 90 ? `${s} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${Math.floor(s / 3600)}h ${Math.round((s % 3600) / 60)}m`;
+  };
   if (asleep) {
     stage.nightGoal = 1;
-    const mins = Math.max(0, Math.round((live.asleep_until - Date.now() / 1000) / 60));
     $("dayNote").hidden = false;
-    $("dayNote").textContent = `Asleep · wakes at 08:00 fly time (in ${Math.floor(mins / 60)}h ${mins % 60}m)`;
+    $("dayNote").textContent = `Asleep · wakes at 08:00 fly time · in ${left(live.asleep_until)}`;
+  } else if (live.eating_until) {
+    const meal = [...(live.events || [])].reverse().find((e) => e.type === "meal");
+    $("dayNote").hidden = false;
+    $("dayNote").textContent = `Eating ${meal ? meal.meal : ""} · 20 fly-minutes · back in ${left(live.eating_until)}`;
+    nightTimer = nightTimer || setTimeout(() => { nightTimer = null; }, 400);
   }
   const evs = live.events || [];
   const last = evs[evs.length - 1];
   const key = last ? `${last.type}:${last.clock_s}` : null;
   if (lastEventKey === null) { lastEventKey = key; if (!asleep) { stage.nightGoal = 0; $("dayNote").hidden = true; } return; }
-  if (key === lastEventKey) { if (!asleep && !nightTimer) { stage.nightGoal = 0; $("dayNote").hidden = true; } return; }
+  if (key === lastEventKey) { if (!asleep && !live.eating_until && !nightTimer) { stage.nightGoal = 0; $("dayNote").hidden = true; } return; }
   // every new event since the last poll (at max speed a whole night can pass between polls)
   const fresh = evs.slice(evs.findIndex((e) => `${e.type}:${e.clock_s}` === lastEventKey) + 1);
   lastEventKey = key;
   const night = [...fresh].reverse().find((e) => e.type === "sleep");
-  if (night && !asleep) {
+  if (night && !asleep && !live.eating_until) {
     stage.nightGoal = 1;
     $("dayNote").hidden = false;
     $("dayNote").textContent = `Night — slept ${Math.round(night.hours)} h, replayed ${fmt(night.replayed)} sweet moments into long-term memory`;
     clearTimeout(nightTimer);
     nightTimer = setTimeout(() => { stage.nightGoal = 0; $("dayNote").hidden = true; nightTimer = null; }, 1800);
   }
+  // a meal that came and went between polls (breakfast is announced with the night, above)
   const meal = [...fresh].reverse().find((e) => e.type === "meal");
-  if (meal) toast(meal.meal === "breakfast" ? "Breakfast — 08:00 fly time" : "Dinner — 18:00 fly time");
+  if (meal && !asleep && !live.eating_until) showMealFor(Date.now() / 1000 + 0.8);
 }
 
 // ---------------------------------------------------------------- how the fly feels
@@ -308,6 +385,7 @@ async function pollLive() {
   try { live = await api(`rooms/${S.room}/fly/${S.fly}/live`); } catch { return; }
   if (S.paused) return;      // paused: nothing new to show, and nothing moves
   showDay(live);
+  measureRate(S.live, live);
   S.live = live;
   pace.ingest(live);
   if (realPaceOn()) return;  // real pace plays the stream; slow-mo plays whole attempts below
