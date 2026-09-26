@@ -85,6 +85,7 @@ class MBBrain(Brain):
         self.w = np.full((len(entries), N_KEYS), cfg.w0, dtype=np.float32)
         self.e_eta = self.unit_eta[self.e_unit].astype(np.float32)
         self.e_tau = self.unit_tau[self.e_unit]
+        self._tau_groups = np.unique(self.e_tau, return_inverse=True)
         self.e_pam = self.unit_dan[self.e_unit] == "PAM"
         self._ecache: dict[bytes, np.ndarray] = {}
         self._flat = np.arange(N_KEYS)
@@ -108,7 +109,8 @@ class MBBrain(Brain):
         per_unit = np.where(self.unit_sign < 0, 1.0 / n_pam, -1.0 / n_ppl) / np.where(live, norm, 1)
         coef = (syn * per_unit[units] / self.cfg.w0).astype(np.float32)
         pam = self.e_pam[e]
-        out = (e, coef, e[pam], e[~pam])
+        e_pam, e_ppl = e[pam], e[~pam]
+        out = (e, coef, e_pam, e_ppl, self.e_eta[e_pam], self.e_eta[e_ppl])
         if len(self._ecache) > 8000:
             self._ecache.clear()
         self._ecache[key] = out
@@ -118,8 +120,8 @@ class MBBrain(Brain):
         # drive per key = mean depression over the active PAM (avoid) MBONs minus the mean over
         # the active PPL1 (approach) MBONs, each MBON's KCs weighted by real synapse counts.
         # Depressing an avoid MBON favours the key; depressing an approach MBON disfavours it.
-        e, coef, _, _ = self._prep(kcs)
-        drive = coef @ (self.cfg.w0 - self.w[e])
+        e, coef = self._prep(kcs)[:2]
+        drive = coef @ (self.cfg.w0 - np.take(self.w, e, axis=0))   # take: a faster gather, same values
         logits = drive / (self.cfg.tau * noise)
         x = np.exp(logits - logits.max())
         return (1 - N_KEYS * self.cfg.floor) * x / x.sum() + self.cfg.floor
@@ -133,15 +135,18 @@ class MBBrain(Brain):
         for (kcs, key), s in zip(traces, signals):
             if s == 0:
                 continue
-            _, _, e_pam, e_ppl = self._prep(kcs)
-            e = e_pam if s > 0 else e_ppl
+            _, _, e_pam, e_ppl, eta_pam, eta_ppl = self._prep(kcs)
+            e, eta = (e_pam, eta_pam) if s > 0 else (e_ppl, eta_ppl)
             if not len(e):
                 continue
-            amt = base * abs(s) * (gain if s > 0 else 1.0) * self.e_eta[e]
+            amt = base * abs(s) * (gain if s > 0 else 1.0) * eta
             self.w[e, key] *= 1 - np.minimum(amt, 1.0)
 
     def elapse(self, fly_seconds: float) -> None:
-        f = np.exp(-fly_seconds / self.e_tau).astype(np.float32)[:, None]
+        # one decay per memory phase (only three forgetting times), spread to every synapse:
+        # the same values as taking exp for each synapse, for a thousandth of the work
+        taus, which = self._tau_groups
+        f = np.exp(-fly_seconds / taus)[which].astype(np.float32)[:, None]
         self.w -= (self.w - self.cfg.w0) * (1 - f)
 
     def consolidate(self, replay: list, strength: float = 1.0) -> int:
@@ -149,7 +154,7 @@ class MBBrain(Brain):
         base = self.cfg.eta * self.cfg.compartments[0].eta * strength
         n = 0
         for kcs, key, s in replay:
-            _, _, e, _ = self._prep(kcs)
+            e = self._prep(kcs)[2]
             e = e[self.unit_lobe[self.e_unit[e]] == "ab"]
             if len(e):
                 self.w[e, key] *= 1 - np.minimum(base * s * self.e_eta[e] * 4, 1.0)
