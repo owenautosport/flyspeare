@@ -63,6 +63,7 @@ class Runner:
         self.slept_s = 0.0                               # fly seconds slept, read by the room's pacing
         self.rest_s = 0.0                                # fly seconds spent eating or asleep
         self.resting = None                              # [{"kind": "sleep"|"meal", "until": epoch}, ...], set by the room
+        self.no_rest = False                             # kept from food and sleep, set by the room
         self._rested = False                             # a rest happened in this run() slice
         self.sim_rate = None                             # its fly-seconds per real second, set by the room
 
@@ -165,11 +166,26 @@ class Runner:
         i = self.inner
         hour = i.hour()
         day = int((i.clock_s + 8 * 3600) // 86400)
+        night = hour >= 22 or hour < 8
+        if self.no_rest:
+            # kept from food and sleep: what it misses is missed, not made up later (a night
+            # skipped is its breakfast skipped too). Hunger and sleep pressure keep building.
+            if hour >= 18 and getattr(self, "_dinner_day", -1) != day:
+                self._dinner_day = day
+                self._skip("dinner")
+            night_id = int((i.clock_s + 10 * 3600) // 86400)    # 22:00 to 08:00 is one night
+            if night and getattr(self, "_skipped_night", -1) != night_id:
+                self._skipped_night = night_id
+                self._skip("night")
+            return
         if hour >= 18 and getattr(self, "_dinner_day", -1) != day:
             self._dinner_day = day
             self._meal("dinner")
-        if hour >= 22 or hour < 8:
+        if night:
             self.sleep()
+
+    def _skip(self, what: str) -> None:
+        self.events.append({"type": "skip", "what": what, "seq": self.totals["attempts"], "clock_s": self.inner.clock_s})
 
     def _meal(self, which: str) -> None:
         """Twenty minutes of fly time off the keys, eating."""
@@ -323,6 +339,7 @@ class Runner:
             "unforgotten_s": self._unforgotten, "block": self._block, "inner": self.inner.to_dict(),
             "rest_s": self.rest_s,
             "events": list(self.events), "dinner_day": getattr(self, "_dinner_day", -1),
+            "skipped_night": getattr(self, "_skipped_night", -1),
             "replay": [[k.tolist(), int(key), float(s)] for k, key, s in self.replay],
             "totals": self.totals, "rng": self.rng.bit_generator.state,
             "seed": self.cfg.seed, "brain": asdict(self.cfg.brain),
@@ -345,7 +362,7 @@ class Runner:
                 "items": self.live_items(n), "stream": self._stream_json(), "brain": self._brain_state(),
                 "inner": self.inner.to_dict(), "events": list(self.events), "life": self.cfg.life,
                 "asleep_until": self._resting_until("sleep"), "eating_until": self._resting_until("meal"),
-                "rest_until": self._resting_until(None), "sim_rate": self.sim_rate}
+                "rest_until": self._resting_until(None), "sim_rate": self.sim_rate, "no_rest": self.no_rest}
 
     def _resting_until(self, kind: str | None):
         """When its current or coming sleep / meal ends (None: when the whole rest ends)."""
@@ -366,7 +383,10 @@ class Runner:
 
     def _load(self) -> None:
         state = json.loads((self.dir / "state.json").read_text())
-        if state["seed"] != self.cfg.seed or state["brain"] != json.loads(json.dumps(asdict(self.cfg.brain))):
+        # a brain setting added since the checkpoint was saved ran at its default
+        as_json = lambda b: json.loads(json.dumps(asdict(b)))
+        saved = {**as_json(BrainConfig()), **state["brain"]}
+        if state["seed"] != self.cfg.seed or saved != as_json(self.cfg.brain):
             raise ValueError("checkpoint was made with a different seed or brain config")
         self.brain.w = np.load(self.dir / "weights.npy")
         self.word_idx, self.attempts = state["word_idx"], state["attempts"]
@@ -377,6 +397,7 @@ class Runner:
         self.events = deque(state.get("events", []), maxlen=20)
         self.rest_s = state.get("rest_s", 0.0)
         self._dinner_day = state.get("dinner_day", -1)
+        self._skipped_night = state.get("skipped_night", -1)
         self.replay = deque(((np.array(k, dtype=np.int64), key, s) for k, key, s in state.get("replay", [])), maxlen=4000)
         self._block = state.get("block", self._block)
         if "inner" in state:

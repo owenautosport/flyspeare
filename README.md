@@ -98,8 +98,12 @@ In the viewer, open **⋯ → New room**: give it a name, choose how many flies 
   shows them all.
 - **Days and nights.** Each fly lives a day: breakfast at 08:00, dinner at 18:00, sleep from 22:00, replaying
   the day into long-term memory. Its clock is shown at the top as **sim time**. At max speed its time runs
-  faster (about ×10,000), so meals and sleep take their same share of it: a night lasts a few real seconds,
-  and you see it slump asleep, then drink from its sugar-water tube. At real fly speed it sleeps a real night.
+  faster (about ×10,000), so meals and sleep take their same share of it, and play at that speed too: a night
+  lasts a couple of real seconds, a 20-minute meal a few frames. At real fly speed it sleeps a real night.
+- **No food or sleep.** The header button keeps every fly in the room from its meals and nights. What it
+  misses is missed, not made up later; its hunger, sleep pressure and fatigue keep building, which makes its
+  choices sloppier, and when you ask how it feels it tells you. Turn it off and it eats and sleeps again at
+  its next dinner and night.
 - Rooms run as their own processes, so closing the viewer never stops training. Every fly is saved every
   5 minutes, on **Save now**, and whenever you **Stop**; **Load** carries on exactly where it left off.
 
@@ -108,6 +112,7 @@ From the command line:
 ```bash
 flyspeare room runs/week1 --flies 1 --speed max     # start a room without the viewer
 flyspeare ctl runs/week1 --pause                    # --go, --speed real|max
+flyspeare ctl runs/week1 --no-rest                  # no food or sleep; --allow-rest to undo
 flyspeare status runs/week1                         # leaderboard
 flyspeare room runs/week1 --resume                  # carry on later
 ```

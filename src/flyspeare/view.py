@@ -10,7 +10,7 @@ API
   POST /api/rooms/NAME/load  {speed}      resume a saved room
   POST /api/rooms/NAME/stop               checkpoint every fly and stop
   DELETE /api/rooms/NAME                  delete a stopped room and all its saves
-  POST /api/rooms/NAME/control {speed?, paused?, watch?, save?}
+  POST /api/rooms/NAME/control {speed?, paused?, watch?, save?, no_rest?}
   GET  /api/rooms/NAME/status             leaderboard (room.json)
   GET  /api/rooms/NAME/fly/ID/live        the watched fly's latest attempts
   GET  /api/rooms/NAME/fly/ID/paper       the text it has typed so far (tail); ?before=N&size=M pages back
@@ -73,7 +73,7 @@ def _pid_alive(room: Path) -> int | None:
 def _room_summary(room: Path) -> dict:
     cfg = json.loads((room / "room-config.json").read_text())
     out = {"name": room.name, "flies": cfg["flies"], "created": cfg.get("created"),
-           "running": _pid_alive(room) is not None, **{k: read_control(room)[k] for k in ("speed", "paused")}}
+           "running": _pid_alive(room) is not None, **{k: read_control(room)[k] for k in ("speed", "paused", "no_rest")}}
     try:
         st = read_status(room)
         n_words = len(_text(cfg["text"])[1])
@@ -170,7 +170,8 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json({"stopping": bool(pid)})
             if action == "control":
                 return self._json(set_control(room, speed=body.get("speed"), paused=body.get("paused"),
-                                              watch=body.get("watch"), save=bool(body.get("save"))))
+                                              watch=body.get("watch"), save=bool(body.get("save")),
+                                              no_rest=body.get("no_rest")))
             self._json({"error": "no such route"}, HTTPStatus.NOT_FOUND)
         except (ValueError, KeyError, IndexError, json.JSONDecodeError) as e:
             self._json({"error": str(e)}, HTTPStatus.BAD_REQUEST)

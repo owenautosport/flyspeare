@@ -41,6 +41,8 @@ const pace = new RealPace(stage, brain);
 const crowd = await loadCrowd(stage);
 let paperDirty = 0;
 stage.onFrame = (dt) => {
+  driveRest();          // every frame: a meal at max speed lasts only a few
+  tickClock();
   brain.draw(dt);
   // z z z above its head while it sleeps
   const z = $("zzz");
@@ -88,6 +90,10 @@ document.querySelectorAll("[data-cam]").forEach((b) => b.onclick = () => {
   document.querySelectorAll("[data-cam]").forEach((x) => x.classList.toggle("on", x === b));
 });
 document.querySelectorAll("[data-speed]").forEach((b) => b.onclick = () => control({ speed: b.dataset.speed }));
+$("noRest").onclick = async () => {
+  await control({ no_rest: !S.noRest });
+  toast(S.noRest ? "No food, no sleep — it stays at the keys" : "It will eat and sleep again at the next meal and night");
+};
 $("pause").onclick = async () => {
   const r = S.rooms.find((x) => x.name === S.room);
   if (r && !r.running) {   // a stopped room: load it back, brains and progress restored
@@ -136,7 +142,7 @@ $("newRoom").onclick = async () => {
 async function control(body) {
   if (!S.room) return toast("Pick a room first");
   const c = await api(`rooms/${S.room}/control`, body);
-  S.speed = c.speed; S.paused = c.paused;
+  S.speed = c.speed; S.paused = c.paused; S.noRest = c.no_rest;
   renderControls();
 }
 
@@ -146,10 +152,14 @@ function renderControls() {
   const running = !!r?.running;
   document.querySelectorAll("[data-speed]").forEach((b) => b.classList.toggle("on", running && b.dataset.speed === S.speed));
   $("pause").textContent = !r ? "–" : !running ? "Load" : S.paused ? "Resume" : "Pause";
+  $("noRest").disabled = !running;
+  $("noRest").classList.toggle("on", running && !!S.noRest);
+  $("noRest").title = S.noRest ? "Kept from food and sleep: click to let it eat and sleep again"
+    : "Keep it from its meals and sleep (hunger and sleep pressure keep building)";
   const live = running && !S.paused;
   $("state").classList.toggle("live", live);
   $("stateText").textContent = !r ? "no room" : !running ? "stopped" : S.paused ? "paused" :
-    `fly #${S.fly}${S.follow && r.flies > 1 ? " (leader)" : ""} · ${S.speed === "real" ? "real fly speed" : "max speed"}${S.live?.asleep_until ? " · asleep" : S.live?.eating_until ? " · eating" : ""}`;
+    `fly #${S.fly}${S.follow && r.flies > 1 ? " (leader)" : ""} · ${S.speed === "real" ? "real fly speed" : "max speed"}${S.live?.asleep_until ? " · asleep" : S.live?.eating_until ? " · eating" : ""}${S.noRest ? " · no food or sleep" : ""}`;
   $("stop").disabled = !running;
   $("del").disabled = running;
   $("hallBtn").hidden = !(r && r.flies > 1);
@@ -229,10 +239,11 @@ function simClock() {
   if (simClock.key === key && clock < simClock.last && simClock.last - clock < 6 * 3600) clock = simClock.last;
   simClock.key = key; simClock.last = clock;
   const t = 8 * 3600 + clock;
-  return { day: Math.floor(t / 86400) + 1, hour: (t % 86400) / 3600, rate };
+  return { day: Math.floor(t / 86400) + 1, hour: (t % 86400) / 3600, rate, clock };
 }
 const hhmm = (h) => `${String(Math.floor(h)).padStart(2, "0")}:${String(Math.floor((h % 1) * 60)).padStart(2, "0")}`;
-setInterval(() => {
+// redrawn every frame: at max speed a tenth of a second is half a sim-hour
+function tickClock() {
   const c = simClock(), r = S.rooms.find((x) => x.name === S.room);
   $("simBig").hidden = !c || !r?.running;
   if (!c || !r?.running || S.paused) return;
@@ -241,28 +252,32 @@ setInterval(() => {
   const night = c.hour >= 21 || c.hour < 6;
   $("simSky").textContent = night ? "☾" : c.hour < 8 || c.hour >= 19 ? "◐" : "☀";
   if (S.live?.asleep_until) $("dayNote").textContent = `Asleep · ${hhmm(c.hour)} → 08:00 sim time`;
-}, 100);
-
-// the rest animation follows its live feed: asleep, then eating. A meal shows for at least
-// 0.8 s (at max speed a 20-minute meal lasts a fraction of a second); breakfast starts when it wakes
-let mealEndAt = 0, mealSeen = 0;
-function showMealFor(end) { mealEndAt = Math.max(mealEndAt, end); }
-function driveRest(live) {
-  const now = Date.now() / 1000;
-  if (live?.eating_until && live.eating_until !== mealSeen) {
-    mealSeen = live.eating_until;
-    showMealFor(Math.max(live.eating_until, Math.max(now, live.asleep_until || 0) + 0.8));
-  }
-  if (live?.asleep_until && live.asleep_until > now) stage.setRest("sleep");
-  else if (now < mealEndAt) {
-    if (stage.rest.kind !== "eat") {
-      stage.setRest("eat");
-      const meal = [...(live?.events || [])].reverse().find((e) => e.type === "meal");
-      toast(meal?.meal === "dinner" ? "Dinner — sugar water, 20 sim-minutes" : "Breakfast — sugar water, 20 sim-minutes");
-    }
-  } else if (stage.rest.kind) stage.setRest(null);
 }
-setInterval(() => driveRest(S.live), 100);
+
+// the rest animation runs on its sim clock, on the timetable its day keeps (asleep 22:00-08:00,
+// breakfast 08:00 and dinner 18:00 for 20 minutes), so a rest lasts exactly its share of sim time
+// on screen and its movements are sped up as much as time is: at x17,000 a meal is a few frames.
+const MEAL_H = 20 / 60;
+function driveRest() {
+  const l = S.live, c = l?.life ? simClock() : null;
+  const h = c?.hour, now = Date.now() / 1000;
+  let kind = c == null ? null : h >= 22 || h < 8 ? "sleep"
+    : (h >= 8 && h < 8 + MEAL_H) || (h >= 18 && h < 18 + MEAL_H) ? "eat" : null;
+  if (c && (S.noRest || l.no_rest)) {
+    // kept from food and sleep: only a rest already under way finishes
+    kind = l.asleep_until > now ? "sleep" : l.eating_until > now ? "eat" : null;
+  } else if (kind === "eat") {
+    // just let back to rest: a meal it was kept from is not eaten late
+    const ev = l.events || [], skip = ev.findLast((e) => e.type === "skip"), meal = ev.findLast((e) => e.type === "meal");
+    if (skip && (!meal || skip.clock_s > meal.clock_s) && c.clock - skip.clock_s < 12 * 3600) kind = null;
+  }
+  stage.rest.speed = Math.max(1, c?.rate || 1);
+  if (kind !== stage.rest.kind) {
+    stage.setRest(kind);
+    if (kind === "eat") toast(h >= 18 ? "Dinner — sugar water, 20 sim-minutes" : "Breakfast — sugar water, 20 sim-minutes");
+  }
+  if (kind === "eat") stage.rest.level = 1 - 0.65 * Math.min(1, (h % 1) / MEAL_H);   // drunk as the meal goes on
+}
 
 // ---------------------------------------------------------------- its day: nights and meals
 let lastEventKey = null, nightTimer = null;
@@ -298,9 +313,6 @@ function showDay(live) {
     clearTimeout(nightTimer);
     nightTimer = setTimeout(() => { stage.nightGoal = 0; $("dayNote").hidden = true; nightTimer = null; }, 1800);
   }
-  // a meal that came and went between polls (breakfast is announced with the night, above)
-  const meal = [...fresh].reverse().find((e) => e.type === "meal");
-  if (meal && !asleep && !live.eating_until) showMealFor(Date.now() / 1000 + 0.8);
 }
 
 // ---------------------------------------------------------------- how the fly feels
@@ -365,7 +377,7 @@ async function pollStatus() {
   if (!S.room) return;
   try {
     const st = await api(`rooms/${S.room}/status`);
-    S.status = st; S.speed = st.speed; S.paused = st.paused;
+    S.status = st; S.speed = st.speed; S.paused = st.paused; S.noRest = !!st.no_rest;
     S.run = { base: st.run_seconds || 0, at: performance.now() - Math.max(0, Date.now() / 1000 - st.updated) * 1000 };
     renderControls();
     crowd.setFlies(st.flies.length);

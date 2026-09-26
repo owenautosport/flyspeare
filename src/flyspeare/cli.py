@@ -152,7 +152,8 @@ def cmd_room(a) -> None:
 
 def cmd_ctl(a) -> None:
     paused = True if a.pause else False if a.go else None
-    print(set_control(Path(a.room_dir), speed=a.speed, paused=paused))
+    no_rest = True if a.no_rest else False if a.allow_rest else None
+    print(set_control(Path(a.room_dir), speed=a.speed, paused=paused, no_rest=no_rest))
 
 
 def cmd_status(a) -> None:
@@ -209,11 +210,13 @@ def main() -> None:
     rm.add_argument("--resume", action="store_true")
     _difficulty_args(rm)
     rm.set_defaults(fn=cmd_room)
-    c = sub.add_parser("ctl", help="change a running room: speed, pause, go")
+    c = sub.add_parser("ctl", help="change a running room: speed, pause, go, no rest")
     c.add_argument("room_dir")
     c.add_argument("--speed", choices=["real", "max"])
     c.add_argument("--pause", action="store_true")
     c.add_argument("--go", action="store_true")
+    c.add_argument("--no-rest", action="store_true", help="keep every fly from its meals and sleep")
+    c.add_argument("--allow-rest", action="store_true", help="let them eat and sleep again")
     c.set_defaults(fn=cmd_ctl)
     stt = sub.add_parser("status", help="leaderboard of a room")
     stt.add_argument("room_dir")

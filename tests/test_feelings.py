@@ -81,3 +81,14 @@ def test_built_up_states_lead_what_it_says():
     assert "Sleep" in text and ("Belly empty" in text or "No food" in text) and "Why press?" in text
     assert f["voice"][-1]["text"].endswith("I keep pressing.")
     assert f["gauges"]["fatigue"]["built"] and list(f["gauges"])[0] == "fatigue"
+
+
+def test_kept_from_food_and_sleep_it_says_so():
+    l = live()
+    l["no_rest"] = True
+    from flyspeare.inner import InnerState
+    l["inner"] = InnerState(meals=3, nights=2, since_meal_s=30 * 3600, hunger=0.95, sleep_pressure=0.99).to_dict()
+    l["events"] = [{"type": "skip", "what": "dinner", "clock_s": 1}, {"type": "skip", "what": "night", "clock_s": 2}]
+    voice = read_feelings(l, WORDS, 50)["voice"]
+    kept = [v for v in voice if "kept from food and sleep" in v["because"]]
+    assert kept and "1 meal" in kept[0]["because"] and "1 night" in kept[0]["because"]

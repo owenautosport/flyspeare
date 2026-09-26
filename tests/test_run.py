@@ -187,3 +187,20 @@ def test_rooms_from_before_inner_states_are_seeded_from_their_history(tmp_path):
     assert again.inner.fails_since_win == again.attempts == state["attempts"]
     assert again.inner.wins == again.word_idx == state["word_idx"]
     assert again.inner.awake_s == again.totals["presses"] * 0.3 > 0
+
+
+def test_checkpoints_from_before_a_brain_setting_existed_still_load(tmp_path):
+    import pytest
+    r = Runner(VERSE * 4, tmp_path / "old", RunConfig(seed=0), quiet=True)
+    r.run(max_words=5)
+    r.checkpoint()
+    state = json.loads((tmp_path / "old" / "state.json").read_text())
+    del state["brain"]["output"]             # saved before `output` existed; its default is what it ran
+    (tmp_path / "old" / "state.json").write_text(json.dumps(state))
+    again = Runner(VERSE * 4, tmp_path / "old", RunConfig(seed=0), quiet=True, resume=True)
+    assert again.word_idx == 5 and np.array_equal(again.brain.w, r.brain.w)
+    # a setting that really differs is still refused
+    state["brain"]["tau"] = state["brain"]["tau"] * 2
+    (tmp_path / "old" / "state.json").write_text(json.dumps(state))
+    with pytest.raises(ValueError):
+        Runner(VERSE * 4, tmp_path / "old", RunConfig(seed=0), quiet=True, resume=True)
